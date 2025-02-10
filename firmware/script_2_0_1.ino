@@ -6,8 +6,8 @@
 #define FIRMWARE_VERSION "1.0.5"
 #define MAX_UPDATE_ATTEMPTS 3
 
-const char* ssid = "Growa";
-const char* password = "Montblanc89!";
+const char* ssid = "";
+const char* password = "";
 const char* version_url = "https://raw.githubusercontent.com/Growa-AI/OTA/main/firmware/version.txt";
 const char* firmware_url = "https://raw.githubusercontent.com/Growa-AI/OTA/main/firmware/firmware.ino.bin";
 
