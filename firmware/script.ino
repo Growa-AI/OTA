@@ -2,15 +2,26 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <WiFiClientSecure.h>
+#include <EEPROM.h>
 
-#define FIRMWARE_VERSION "1.0.1"
+#define FIRMWARE_VERSION "1.0.2"
+#define EEPROM_SIZE 64
 
-const char* ssid = "";
-const char* password = "";
+const char* ssid = "Growa";
+const char* password = "Montblanc89!";
 const char* version_url = "https://raw.githubusercontent.com/Growa-AI/OTA/main/firmware/version.txt";
 const char* firmware_url = "https://raw.githubusercontent.com/Growa-AI/OTA/main/firmware/firmware.ino.bin";
 
 WiFiClientSecure secureClient;
+
+void clearEEPROM() {
+    EEPROM.begin(EEPROM_SIZE);
+    for (int i = 0; i < EEPROM_SIZE; i++) {
+        EEPROM.write(i, 0);
+    }
+    EEPROM.commit();
+    EEPROM.end();
+}
 
 void checkAndUpdate() {
    if(WiFi.status() != WL_CONNECTED) return;
@@ -18,15 +29,12 @@ void checkAndUpdate() {
    HTTPClient http;
    http.setReuse(false);
    
-   // Aggressive cache-busting
    String versionUrlWithTimestamp = String(version_url) + 
                                     "?timestamp=" + String(millis()) + 
                                     "&random=" + String(random(10000));
    
-   // Use secure client
    http.begin(secureClient, versionUrlWithTimestamp);
    
-   // Multiple cache control headers
    http.addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
    http.addHeader("Pragma", "no-cache");
    http.addHeader("Expires", "0");
@@ -37,59 +45,48 @@ void checkAndUpdate() {
        String newVersion = http.getString();
        newVersion.trim();
        
-       // Validate version
-       if(newVersion.length() > 0) {
-           Serial.println("Current version: " + String(FIRMWARE_VERSION));
-           Serial.println("Available version: " + newVersion);
+       if(newVersion.length() > 0 && String(FIRMWARE_VERSION) != newVersion) {
+           Serial.println("Update available!");
+           http.end();
            
-           if(String(FIRMWARE_VERSION) != newVersion) {
-               Serial.println("Update available!");
-               http.end();
+           http.begin(secureClient, firmware_url);
+           httpCode = http.GET();
+           
+           if(httpCode == HTTP_CODE_OK) {
+               int contentLength = http.getSize();
+               Serial.println("Downloading " + String(contentLength) + " bytes...");
                
-               // Download firmware
-               http.begin(secureClient, firmware_url);
-               httpCode = http.GET();
-               
-               if(httpCode == HTTP_CODE_OK) {
-                   int contentLength = http.getSize();
-                   Serial.println("Downloading " + String(contentLength) + " bytes...");
-                   
-                   if(Update.begin(contentLength)) {
-                       size_t written = Update.writeStream(http.getStream());
-                       if(written == contentLength) {
-                           Serial.println("Written : " + String(written) + " successfully");
-                           if(Update.end(true)) {
-                               Serial.println("OTA done!");
-                               ESP.restart();
-                           } else {
-                               Serial.println("Update end error: " + String(Update.getError()));
-                           }
+               // Force complete erase and prepare for update
+               Update.setMD5(String(random(1000000)).c_str());
+               if(Update.begin(contentLength, U_FLASH)) {
+                   size_t written = Update.writeStream(http.getStream());
+                   if(written == contentLength) {
+                       if(Update.end(true)) {
+                           clearEEPROM();  // Pulizia memoria
+                           Serial.println("OTA Update Successful!");
+                           delay(1000);
+                           ESP.restart();
                        } else {
-                           Serial.println("Write failed: " + String(written) + "/" + String(contentLength));
+                           Serial.println("Update Finalization Error");
                        }
                    } else {
-                       Serial.println("Not enough space to begin OTA");
+                       Serial.println("Incomplete Write");
                    }
                } else {
-                   Serial.println("Firmware download failed");
+                   Serial.println("Update Initialization Failed");
                }
            } else {
-               Serial.println("Already on latest version");
+               Serial.println("Firmware Download Failed");
            }
-       } else {
-           Serial.println("Invalid version received");
        }
-   } else {
-       Serial.println("Version check failed");
    }
    http.end();
 }
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("Current firmware version: " + String(FIRMWARE_VERSION));
     
-    // Allow insecure connection (use cautiously)
+    // Inizializzazioni aggiuntive
     secureClient.setInsecure();
     
     WiFi.begin(ssid, password);
@@ -97,16 +94,18 @@ void setup() {
         delay(500);
         Serial.print(".");
     }
-    Serial.println("\nConnected to WiFi");
+    Serial.println("\nWiFi Connesso");
     
-    delay(1000);  // Delay before first check
     checkAndUpdate();
 }
 
 void loop() {
-    delay(20000);  // Wait 20 seconds between checks
-    if(WiFi.status() == WL_CONNECTED) {
+    static unsigned long lastCheck = 0;
+    unsigned long currentMillis = millis();
+    
+    // Check ogni 30 minuti
+    if (currentMillis - lastCheck >= 1800000) {
+        lastCheck = currentMillis;
         checkAndUpdate();
-        delay(1000);  // Additional small delay after check
     }
 }
